@@ -12,7 +12,7 @@ pipeline {
     stage("Code Analysis"){
       steps {
          script {
-            sh "./opt/sonar/bin/sonar-scanner -Dproject.settings=./myjavaapp.properties "
+            sh "/opt/sonar/bin/sonar-scanner -Dproject.settings=./myjavaapp.properties "
          }
       }
     }
