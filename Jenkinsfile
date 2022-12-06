@@ -1,47 +1,85 @@
 pipeline {
-    agent any
-    tools {
-        maven 'Maven363'
+   agent any
+
+   environment {
+
+    ARTIFACTORY_URL="http://172.31.32.31:8082/artifactory"
+    ARTIFACTORY_ID="artifactory-1"
+    ARTIFACTORY_CREDS="jfrog-creds"
+
+   }
+   stages{
+
+    stage("Build Code"){
+      steps {
+         script {
+            sh '''
+            mvn install
+            myver="\$(grep -i version pom.xml |head -2 |tail -1|cut -d">" -f2|cut -d"<" -f1)"
+            mv target/*.war target/myApp-v.\$myver-release-\${BUILD_NUMBER}.war
+            '''
+
+
+         }
+      }
     }
-    options {
-        timeout(10)
-        buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '5', numToKeepStr: '5')
+
+    stage("runing Unit Tests"){
+      steps {
+         script {
+            sh "mvn test"
+         }
+      }
     }
-    stages {
-        stage('Build') {
+    stage("Code Analysis"){
+      environment {
+            def sonarHome = tool name: 'sonarscanner-4.7'
+      }
+      steps {  
+            withSonarQubeEnv('mysonarserver') {
+               sh "${sonarHome}/bin/sonar-scanner -Dproject.settings=./myjavaapp.properties" 
+            }
+            sleep time: 30000, unit: 'MILLISECONDS'
+            script {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                        }
+            }
+
+      }
+   }
+
+    stage ('Artifactory configuration') {
             steps {
-                sh "mvn clean install"
+                rtServer (
+                    id: "${ARTIFACTORY_ID}",
+                    url: "${ARTIFACTORY_URL}",
+                    credentialsId: "${ARTIFACTORY_CREDS}"
+                )
+            }
+    }
+    stage ('Upload Artifacts') {
+            steps {
+               rtUpload (
+                    // Obtain an Artifactory server instance, defined in Jenkins --> Manage Jenkins --> Configure System:
+                    serverId: "artifactory-1",
+                    spec: """{
+                            "files": [
+                                    {
+                                        "pattern": "target/*.war",
+                                        "target": "example-repo-local/ashok/"
+                                    }
+                                ]
+                            }"""
+               )
             }
         }
-        stage('upload artifact to nexus') {
-            steps {
-                nexusArtifactUploader artifacts: [
-                    [
-                        artifactId: 'wwp', 
-                        classifier: '', 
-                        file: 'target/wwp-1.0.0.war', 
-                        type: 'war'
-                    ]
-                ], 
-                    credentialsId: 'nexus3', 
-                    groupId: 'koddas.web.war', 
-                    nexusUrl: '10.0.0.91:8081', 
-                    nexusVersion: 'nexus3', 
-                    protocol: 'http', 
-                    repository: 'samplerepo', 
-                    version: '1.0.0'
-            }
-        }
-    }
-    post {
-        always{
-            deleteDir()
-        }
-        failure {
-            echo "sendmail -s mvn build failed receipients@my.com"
-        }
-        success {
-            echo "The job is successful"
-        }
-    }
+
+   }
+   post {
+      always {
+         cleanWs()
+      }
+   }
 }
